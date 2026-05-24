@@ -10,6 +10,7 @@ import { INDEX_LISTING_TO_ES, indexListingJob } from '../jobs/indexListingJob.js
 import { RELEASE_ESCROW, processReleaseEscrow } from '../jobs/escrowReleaseJob.js';
 import { createMarketService, INGEST_AGMARKNET_PRICES } from '../services/market-service.js';
 import { createNotificationService, DELIVER_NOTIFICATION, NOTIFICATION_FALLBACK } from '../services/notification-service.js';
+import { createDisputeService } from '../services/dispute-service.js';
 
 const MAX_VISION_TIMEOUT = 5000;
 const SAFE_FLAGGED = new Set(['LIKELY', 'VERY_LIKELY']);
@@ -76,6 +77,7 @@ export const queuePlugin = fp(async (server) => {
   const marketQueue = new Queue('market-queue', { connection });
   const notificationQueue = new Queue('notification-queue', { connection });
   const sitemapQueue = new Queue('sitemap', { connection });
+  const disputeQueue = new Queue('dispute-flow', { connection });
 
   const authService = createAuthService(server);
 
@@ -87,6 +89,26 @@ export const queuePlugin = fp(async (server) => {
         return await processReleaseEscrow(server, job.data as any);
       }
       server.log.warn({ jobId: job.id, jobName: job.name }, 'unknown escrow-payout job');
+      return { status: 'ignored' };
+    },
+    { connection }
+  );
+
+  new Worker(
+    'dispute-flow',
+    async (job) => {
+      server.log.info({ jobId: job.id, name: job.name, data: job.data }, 'processing dispute workflow job');
+      const disputeService = createDisputeService(server);
+      if (job.name === 'DISPUTE_EVIDENCE_TIMEOUT') {
+        return await disputeService.autoCloseDisputeIfEvidenceMissing(job.data.disputeId);
+      }
+      if (job.name === 'DISPUTE_ASSIGN_AGENT') {
+        return await disputeService.enforceAgentAssignment(job.data.disputeId);
+      }
+      if (job.name === 'DISPUTE_RESOLUTION_DEADLINE') {
+        return await disputeService.autoResolveDisputeAfterDeadline(job.data.disputeId);
+      }
+      server.log.warn({ jobId: job.id, jobName: job.name }, 'unknown dispute-flow job');
       return { status: 'ignored' };
     },
     { connection }
@@ -381,6 +403,7 @@ export const queuePlugin = fp(async (server) => {
 
   server.decorate('queues', {
     payoutQueue,
+    disputeQueue,
     bulkRegisterQueue,
     photoProcessingQueue,
     photoProcessingEvents,
@@ -393,6 +416,7 @@ export const queuePlugin = fp(async (server) => {
 
   server.addHook('onClose', async () => {
     await payoutQueue.close();
+    await disputeQueue.close();
     await bulkRegisterQueue.close();
     await photoProcessingQueue.close();
     await photoProcessingEvents.close();
@@ -408,6 +432,7 @@ declare module 'fastify' {
   interface FastifyInstance {
     queues: {
       payoutQueue: Queue;
+      disputeQueue: Queue;
       bulkRegisterQueue: Queue;
       photoProcessingQueue: Queue;
       photoProcessingEvents: QueueEvents;

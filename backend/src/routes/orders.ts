@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createOrderService } from '../services/order-service.js';
+import { createChallanService } from '../services/challan-service.js';
 import { z } from 'zod';
 
 const buyNowSchema = z.object({
@@ -31,6 +32,7 @@ const rfqSchema = z.object({
 
 export default async function (server: FastifyInstance) {
   const orderService = createOrderService(server);
+  const challanService = createChallanService(server);
 
   server.post('/orders/buy-now', { preHandler: [server.authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const payload = buyNowSchema.parse(request.body as Record<string, unknown>);
@@ -73,6 +75,30 @@ export default async function (server: FastifyInstance) {
     const payload = verifyDeliveryOtpSchema.parse(request.body as Record<string, unknown>);
     const userId = request.user.userId;
     const result = await orderService.verifyDeliveryOtp(userId, orderId, payload.otp);
+    return reply.send(result);
+  });
+
+  server.post('/orders/:orderId/challan', { preHandler: [server.authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const { orderId } = request.params as { orderId: string };
+    const userId = request.user.userId;
+
+    const result = await challanService.createEChallan(orderId, userId);
+    return reply.code(201).send(result);
+  });
+
+  server.post('/orders/:orderId/challan/sign', { preHandler: [server.authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const { orderId } = request.params as { orderId: string };
+    const userId = request.user.userId;
+    const result = await challanService.signEChallan(orderId, userId);
+    return reply.send(result);
+  });
+
+  const verifyChallanOtpSchema = z.object({ otp: z.string().length(6) });
+  server.post('/orders/:orderId/challan/verify-otp', { preHandler: [server.authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const { orderId } = request.params as { orderId: string };
+    const payload = verifyChallanOtpSchema.parse(request.body as Record<string, unknown>);
+    const userId = request.user.userId;
+    const result = await challanService.verifyEChallanOtp(orderId, userId, payload.otp);
     return reply.send(result);
   });
 

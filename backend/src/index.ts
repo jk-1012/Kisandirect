@@ -18,7 +18,10 @@ import authPlugin from './plugins/auth.js';
 import { dbPlugin } from './plugins/db.js';
 import { queuePlugin } from './plugins/queues.js';
 import { storagePlugin } from './plugins/storage.js';
-
+import disputeRoutes from './routes/disputes.js';
+import coldStorageRoutes from './routes/cold-storage.js';
+import complianceRoutes from './routes/compliance.js';
+import challanRoutes from './routes/challan.js';
 dotenv.config();
 
 const server = Fastify({ logger: true });
@@ -45,11 +48,15 @@ await server.register(authRoutes, { prefix: '/api/v1/auth' });
 await server.register(farmerRoutes, { prefix: '/api/v1/farmers' });
 await server.register(listingRoutes, { prefix: '/api/v1' });
 await server.register(orderRoutes, { prefix: '/api/v1' });
+await server.register(disputeRoutes, { prefix: '/api/v1' });
+await server.register(coldStorageRoutes, { prefix: '/api/v1' });
+await server.register(complianceRoutes, { prefix: '/api/v1' });
 await server.register(offersRoutes, { prefix: '/api/v1' });
 await server.register(rfqRoutes, { prefix: '/api/v1' });
 await server.register(ledgerRoutes, { prefix: '/api/v1' });
 await server.register(marketRoutes, { prefix: '/api/v1' });
 await server.register(notificationRoutes, { prefix: '/api/v1' });
+await server.register(challanRoutes);
 
 server.get('/api/health', async () => ({ status: 'ok', env: process.env.NODE_ENV ?? 'development' }));
 
