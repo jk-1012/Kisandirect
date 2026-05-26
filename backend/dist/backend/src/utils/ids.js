@@ -12,3 +12,15 @@ export function generateListingId() {
     const day = now.getDate().toString().padStart(2, '0');
     return `LST-${year}${month}${day}-${randomSixDigits()}`;
 }
+export function generateDisputeId() {
+    const dateCode = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    return `DSP-${dateCode}-${randomSixDigits()}`;
+}
+export function generateBookingId() {
+    const dateCode = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    return `CSB-${dateCode}-${randomSixDigits()}`;
+}
+export function generateComplianceRequestId() {
+    const dateCode = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    return `DPDP-${dateCode}-${randomSixDigits()}`;
+}

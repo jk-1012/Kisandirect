@@ -11,6 +11,7 @@ import { RELEASE_ESCROW, processReleaseEscrow } from '../jobs/escrowReleaseJob.j
 import { createMarketService, INGEST_AGMARKNET_PRICES } from '../services/market-service.js';
 import { createNotificationService, DELIVER_NOTIFICATION, NOTIFICATION_FALLBACK } from '../services/notification-service.js';
 import { createDisputeService } from '../services/dispute-service.js';
+import { ACCOUNT_DELETION, executeAccountDeletion } from '../jobs/accountDeletionJob.js';
 
 const MAX_VISION_TIMEOUT = 5000;
 const SAFE_FLAGGED = new Set(['LIKELY', 'VERY_LIKELY']);
@@ -78,6 +79,7 @@ export const queuePlugin = fp(async (server) => {
   const notificationQueue = new Queue('notification-queue', { connection });
   const sitemapQueue = new Queue('sitemap', { connection });
   const disputeQueue = new Queue('dispute-flow', { connection });
+  const deletionQueue = new Queue('account-deletion', { connection });
 
   const authService = createAuthService(server);
 
@@ -109,6 +111,19 @@ export const queuePlugin = fp(async (server) => {
         return await disputeService.autoResolveDisputeAfterDeadline(job.data.disputeId);
       }
       server.log.warn({ jobId: job.id, jobName: job.name }, 'unknown dispute-flow job');
+      return { status: 'ignored' };
+    },
+    { connection }
+  );
+
+  new Worker(
+    'account-deletion',
+    async (job) => {
+      server.log.info({ jobId: job.id, name: job.name, data: job.data }, 'processing account deletion job');
+      if (job.name === ACCOUNT_DELETION) {
+        return await executeAccountDeletion(server, job.data as { userId: string });
+      }
+      server.log.warn({ jobId: job.id, jobName: job.name }, 'unknown account-deletion job');
       return { status: 'ignored' };
     },
     { connection }
@@ -411,6 +426,7 @@ export const queuePlugin = fp(async (server) => {
     marketQueue,
     notificationQueue,
     sitemapQueue,
+    deletionQueue,
     connection
   });
 
@@ -424,6 +440,7 @@ export const queuePlugin = fp(async (server) => {
     await marketQueue.close();
     await notificationQueue.close();
     await sitemapQueue.close();
+    await deletionQueue.close();
     await redisClient.quit();
   });
 });
@@ -440,6 +457,7 @@ declare module 'fastify' {
       marketQueue: Queue;
       notificationQueue: Queue;
       sitemapQueue: Queue;
+      deletionQueue: Queue;
       connection: ReturnType<typeof createClient>;
     };
   }

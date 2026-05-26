@@ -1,4 +1,5 @@
 import { createOrderService } from '../services/order-service.js';
+import { createChallanService } from '../services/challan-service.js';
 import { z } from 'zod';
 const buyNowSchema = z.object({
     listing_id: z.string().min(1),
@@ -26,6 +27,7 @@ const rfqSchema = z.object({
 });
 export default async function (server) {
     const orderService = createOrderService(server);
+    const challanService = createChallanService(server);
     server.post('/orders/buy-now', { preHandler: [server.authenticate] }, async (request, reply) => {
         const payload = buyNowSchema.parse(request.body);
         const buyerId = request.user.userId;
@@ -56,6 +58,26 @@ export default async function (server) {
         const payload = verifyDeliveryOtpSchema.parse(request.body);
         const userId = request.user.userId;
         const result = await orderService.verifyDeliveryOtp(userId, orderId, payload.otp);
+        return reply.send(result);
+    });
+    server.post('/orders/:orderId/challan', { preHandler: [server.authenticate] }, async (request, reply) => {
+        const { orderId } = request.params;
+        const userId = request.user.userId;
+        const result = await challanService.createEChallan(orderId, userId);
+        return reply.code(201).send(result);
+    });
+    server.post('/orders/:orderId/challan/sign', { preHandler: [server.authenticate] }, async (request, reply) => {
+        const { orderId } = request.params;
+        const userId = request.user.userId;
+        const result = await challanService.signEChallan(orderId, userId);
+        return reply.send(result);
+    });
+    const verifyChallanOtpSchema = z.object({ otp: z.string().length(6) });
+    server.post('/orders/:orderId/challan/verify-otp', { preHandler: [server.authenticate] }, async (request, reply) => {
+        const { orderId } = request.params;
+        const payload = verifyChallanOtpSchema.parse(request.body);
+        const userId = request.user.userId;
+        const result = await challanService.verifyEChallanOtp(orderId, userId, payload.otp);
         return reply.send(result);
     });
     // Razorpay webhook endpoint – public

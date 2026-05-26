@@ -10,6 +10,8 @@ import { INDEX_LISTING_TO_ES, indexListingJob } from '../jobs/indexListingJob.js
 import { RELEASE_ESCROW, processReleaseEscrow } from '../jobs/escrowReleaseJob.js';
 import { createMarketService, INGEST_AGMARKNET_PRICES } from '../services/market-service.js';
 import { createNotificationService, DELIVER_NOTIFICATION, NOTIFICATION_FALLBACK } from '../services/notification-service.js';
+import { createDisputeService } from '../services/dispute-service.js';
+import { ACCOUNT_DELETION, executeAccountDeletion } from '../jobs/accountDeletionJob.js';
 const MAX_VISION_TIMEOUT = 5000;
 const SAFE_FLAGGED = new Set(['LIKELY', 'VERY_LIKELY']);
 const SENSITIVE_KEYWORDS = ['currency', 'money', 'rupee', 'cash', 'banknote', 'note', 'bill', 'face', 'faces', 'person', 'people', 'human', 'portrait'];
@@ -65,6 +67,8 @@ export const queuePlugin = fp(async (server) => {
     const marketQueue = new Queue('market-queue', { connection });
     const notificationQueue = new Queue('notification-queue', { connection });
     const sitemapQueue = new Queue('sitemap', { connection });
+    const disputeQueue = new Queue('dispute-flow', { connection });
+    const deletionQueue = new Queue('account-deletion', { connection });
     const authService = createAuthService(server);
     new Worker('escrow-payout', async (job) => {
         server.log.info({ jobId: job.id, name: job.name, data: job.data }, 'processing escrow payout job');
@@ -72,6 +76,29 @@ export const queuePlugin = fp(async (server) => {
             return await processReleaseEscrow(server, job.data);
         }
         server.log.warn({ jobId: job.id, jobName: job.name }, 'unknown escrow-payout job');
+        return { status: 'ignored' };
+    }, { connection });
+    new Worker('dispute-flow', async (job) => {
+        server.log.info({ jobId: job.id, name: job.name, data: job.data }, 'processing dispute workflow job');
+        const disputeService = createDisputeService(server);
+        if (job.name === 'DISPUTE_EVIDENCE_TIMEOUT') {
+            return await disputeService.autoCloseDisputeIfEvidenceMissing(job.data.disputeId);
+        }
+        if (job.name === 'DISPUTE_ASSIGN_AGENT') {
+            return await disputeService.enforceAgentAssignment(job.data.disputeId);
+        }
+        if (job.name === 'DISPUTE_RESOLUTION_DEADLINE') {
+            return await disputeService.autoResolveDisputeAfterDeadline(job.data.disputeId);
+        }
+        server.log.warn({ jobId: job.id, jobName: job.name }, 'unknown dispute-flow job');
+        return { status: 'ignored' };
+    }, { connection });
+    new Worker('account-deletion', async (job) => {
+        server.log.info({ jobId: job.id, name: job.name, data: job.data }, 'processing account deletion job');
+        if (job.name === ACCOUNT_DELETION) {
+            return await executeAccountDeletion(server, job.data);
+        }
+        server.log.warn({ jobId: job.id, jobName: job.name }, 'unknown account-deletion job');
         return { status: 'ignored' };
     }, { connection });
     new Worker('bulk-register', async (job) => {
@@ -301,6 +328,7 @@ export const queuePlugin = fp(async (server) => {
     }
     server.decorate('queues', {
         payoutQueue,
+        disputeQueue,
         bulkRegisterQueue,
         photoProcessingQueue,
         photoProcessingEvents,
@@ -308,10 +336,12 @@ export const queuePlugin = fp(async (server) => {
         marketQueue,
         notificationQueue,
         sitemapQueue,
+        deletionQueue,
         connection
     });
     server.addHook('onClose', async () => {
         await payoutQueue.close();
+        await disputeQueue.close();
         await bulkRegisterQueue.close();
         await photoProcessingQueue.close();
         await photoProcessingEvents.close();
@@ -319,6 +349,7 @@ export const queuePlugin = fp(async (server) => {
         await marketQueue.close();
         await notificationQueue.close();
         await sitemapQueue.close();
+        await deletionQueue.close();
         await redisClient.quit();
     });
 });

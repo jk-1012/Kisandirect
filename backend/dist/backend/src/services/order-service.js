@@ -1,6 +1,7 @@
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import { RELEASE_ESCROW, processReleaseEscrow } from '../jobs/escrowReleaseJob.js';
+import { createTrustScoreService } from './trust-score-service.js';
 export function createOrderService(server) {
     async function generateOrderId() {
         const dateCode = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -304,6 +305,7 @@ export function createOrderService(server) {
         await server.db.query('UPDATE public.otp_sessions SET used = TRUE, attempts = attempts + 1 WHERE id = $1', [session.id]);
         await server.db.query('UPDATE public.orders SET order_status = $1, delivery_confirmed_at = NOW() WHERE order_id = $2', ['DELIVERED', orderId]);
         await server.queues.payoutQueue.remove(orderId);
+        await createTrustScoreService(server).recalculateFarmerTrustScore(order.farmer_id);
         const result = await processReleaseEscrow(server, { orderId });
         if (!result?.ok) {
             server.log.warn({ orderId, result }, 'Immediate escrow release failed');
