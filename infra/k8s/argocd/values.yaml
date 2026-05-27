@@ -1,0 +1,18 @@
+server:
+  service:
+    type: ClusterIP
+
+controller:
+  metrics:
+    enabled: true
+
+repoServer:
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+configs:
+  cm:
+    # enable dex or OIDC later; keep repo credentials out of git
+    admin.enabled: "true"

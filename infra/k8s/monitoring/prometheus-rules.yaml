@@ -1,0 +1,70 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kisandirect-alerts
+  namespace: monitoring
+spec:
+  groups:
+    - name: api.alerts
+      rules:
+        # P1: High error rate
+        - alert: HighErrorRate
+          expr: |
+            rate(http_requests_total{job="kisandirect-api",status=~"5.."}[5m])
+            / rate(http_requests_total{job="kisandirect-api"}[5m]) > 0.05
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Error rate >5% for 2 minutes"
+            runbook: "https://runbooks.kisandirect.in/high-error-rate"
+
+        # P1: API latency
+        - alert: HighLatencyP99
+          expr: |
+            histogram_quantile(0.99,
+              rate(http_request_duration_seconds_bucket{job="kisandirect-api"}[5m])
+            ) > 2
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "P99 latency >2s"
+
+        # P1: Escrow release job stuck
+        - alert: EscrowReleaseStuck
+          expr: |
+            bullmq_job_failed_total{queue="escrow-release"} > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Escrow release job failed — manual intervention required"
+            runbook: "https://runbooks.kisandirect.in/escrow-release-failed"
+
+        # P2: AgMarkNet stale
+        - alert: MandiPriceStale
+          expr: |
+            time() - mandi_price_last_updated_seconds > 5 * 3600
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Mandi prices not updated in >5 hours"
+
+        # P2: DB connections
+        - alert: HighDBConnections
+          expr: pg_stat_activity_count > 400
+          for: 5m
+          labels:
+            severity: warning
+
+        # P3: Pod restart loop
+        - alert: PodRestartLoop
+          expr: |
+            rate(kube_pod_container_status_restarts_total{namespace="kisandirect"}[15m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Pod {{ $labels.pod }} restarting frequently"

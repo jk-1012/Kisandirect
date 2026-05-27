@@ -1,0 +1,52 @@
+name: Build, Push & Trigger ArgoCD
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build and push image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO }}:latest
+
+      - name: Retrieve ArgoCD admin password from Secrets Manager
+        run: |
+          SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id ${ARMO_ARGOCD_ADMIN_SECRET:-/kisan/argocd/admin} --query SecretString --output text)
+          echo "ARGOCD_ADMIN_PASSWORD=$(echo $SECRET_JSON | jq -r .password)" >> $GITHUB_ENV
+        env:
+          ARMO_ARGOCD_ADMIN_SECRET: 
+
+      - name: Install argocd CLI
+        run: |
+          curl -sSL -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+          chmod +x /usr/local/bin/argocd
+
+      - name: Trigger ArgoCD sync
+        run: |
+          argocd login ${ARGOCD_SERVER:-argocd.kisan.internal} --username admin --password "${{ env.ARGOCD_ADMIN_PASSWORD }}" --insecure
+          argocd app sync kisan-app --grpc-web

@@ -12,7 +12,8 @@
     "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
     "build": "npm --prefix frontend run build && npm --prefix backend run build",
     "lint": "npm --prefix frontend run lint && npm --prefix backend run lint",
-    "db:migrate": "npm --prefix backend run db:migrate"
+    "db:migrate": "npm --prefix backend run db:migrate",
+    "test:unit": "npm --prefix backend exec jest --config ./jest.config.js"
   },
   "devDependencies": {
     "concurrently": "^8.0.0"

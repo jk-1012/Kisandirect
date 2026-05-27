@@ -278,6 +278,91 @@ export default async function (server: FastifyInstance) {
     return reply.send(xml);
   });
 
+  // Owner-only analytics endpoint (default last 30 days)
+  server.get('/storefronts/:store_id/analytics', { preHandler: server.authenticate }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const { store_id } = request.params as { store_id: string };
+    const userId = request.user.userId;
+    const storefront = await verifyOwnership(server, store_id, userId);
+    if (!storefront) return reply.code(403).send({ error: 'Not authorized' });
+
+    const daysParam = (request.query as any)?.days ?? '30';
+    const days = Number(daysParam) || 30;
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    const [viewsRes, eventsRes, sourcesRes, devicesRes, geoRes, summaryRes] = await Promise.all([
+      server.db.query(`
+        SELECT DATE_TRUNC('day', recorded_at) as day, COUNT(*) as views
+        FROM storefront_analytics
+        WHERE store_id = $1 AND event_type = 'PAGE_VIEW' AND recorded_at >= $2
+        GROUP BY day ORDER BY day
+      `, [store_id, from]),
+
+      server.db.query(`
+        SELECT event_type, COUNT(*) as count
+        FROM storefront_analytics
+        WHERE store_id = $1 AND recorded_at >= $2
+        GROUP BY event_type
+      `, [store_id, from]),
+
+      server.db.query(`
+        SELECT 
+          CASE 
+            WHEN referrer LIKE '%wa.me%' OR referrer LIKE '%whatsapp%' THEN 'WhatsApp'
+            WHEN referrer IS NULL OR referrer = '' THEN 'Direct'
+            WHEN referrer LIKE '%google%' THEN 'Google'
+            ELSE 'Other'
+          END as source,
+          COUNT(*) as count
+        FROM storefront_analytics
+        WHERE store_id = $1 AND event_type = 'PAGE_VIEW' AND recorded_at >= $2
+        GROUP BY source
+      `, [store_id, from]),
+
+      server.db.query(`
+        SELECT device_type, COUNT(*) as count
+        FROM storefront_analytics
+        WHERE store_id = $1 AND recorded_at >= $2
+        GROUP BY device_type
+      `, [store_id, from]),
+
+      server.db.query(`
+        SELECT visitor_state, COUNT(*) as views
+        FROM storefront_analytics
+        WHERE store_id = $1 AND recorded_at >= $2 AND visitor_state IS NOT NULL
+        GROUP BY visitor_state ORDER BY views DESC LIMIT 10
+      `, [store_id, from]),
+
+      // summary counts: today, week, month and specific event counts
+      server.db.query(`
+        SELECT
+          SUM(CASE WHEN recorded_at >= date_trunc('day', now()) THEN 1 ELSE 0 END) AS today,
+          SUM(CASE WHEN recorded_at >= now() - INTERVAL '7 days' THEN 1 ELSE 0 END) AS week,
+          SUM(CASE WHEN recorded_at >= now() - INTERVAL '30 days' THEN 1 ELSE 0 END) AS month,
+          SUM(CASE WHEN event_type = 'LISTING_CLICK' THEN 1 ELSE 0 END) AS listing_clicks,
+          SUM(CASE WHEN event_type = 'WHATSAPP_TAP' THEN 1 ELSE 0 END) AS whatsapp_taps,
+          SUM(CASE WHEN event_type = 'CONTACT_SUBMIT' THEN 1 ELSE 0 END) AS contact_submits
+        FROM storefront_analytics
+        WHERE store_id = $1
+      `, [store_id])
+    ]);
+
+    const daily_views = viewsRes.rows;
+    const event_breakdown = eventsRes.rows;
+    const traffic_sources = sourcesRes.rows;
+    const devices = devicesRes.rows;
+    const top_states = geoRes.rows;
+    const summaryRow = summaryRes.rows[0] ?? {};
+
+    return reply.send({ daily_views, event_breakdown, traffic_sources, devices, top_states, summary: {
+      today: Number(summaryRow.today ?? 0),
+      week: Number(summaryRow.week ?? 0),
+      month: Number(summaryRow.month ?? 0),
+      listing_clicks: Number(summaryRow.listing_clicks ?? 0),
+      whatsapp_taps: Number(summaryRow.whatsapp_taps ?? 0),
+      contact_submits: Number(summaryRow.contact_submits ?? 0)
+    }});
+  });
+
   server.get('/storefronts/:store_id/page-json', { preHandler: server.authenticate }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { store_id } = request.params as { store_id: string };
     const userId = request.user.userId;

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import path from 'path';
 import sanitizeHtml from 'sanitize-html';
 import * as QRCode from 'qrcode';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
@@ -21,6 +22,11 @@ async function verifyOwnership(server, storeId, userId) {
 }
 export default async function (server) {
     const pageCollection = server.mongo.db.collection('storefront_pages');
+    const RESERVED_SLUGS = new Set(['api', 'admin', 'buy', 'farmer', 'store', 'blog', 'support', 'www', 'mail']);
+    function normalizeSlug(slug) {
+        return slug.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 50);
+    }
+    const slugSchema = z.string().min(3).max(50).regex(/^[a-z0-9-]+$/);
     server.post('/storefronts/:store_id/publish', { preHandler: server.authenticate }, async (request, reply) => {
         const { store_id } = request.params;
         const { page_json, html, css } = publishSchema.parse(request.body);
@@ -83,6 +89,228 @@ export default async function (server) {
             return reply.code(404).send({ error: 'Storefront not found' });
         }
         return reply.send(storefront);
+    });
+    // List owner's storefronts
+    server.get('/storefronts/my', { preHandler: server.authenticate }, async (request, reply) => {
+        const userId = request.user.userId;
+        const res = await server.db.query('SELECT * FROM storefronts WHERE owner_id = $1 ORDER BY updated_at DESC', [userId]);
+        return reply.send(res.rows);
+    });
+    // Create storefront from template
+    server.post('/storefronts', { preHandler: server.authenticate }, async (request, reply) => {
+        const bodySchema = z.object({ name: z.string().min(3), slug: z.string().min(3).max(50), template_id: z.string(), description: z.string().optional() });
+        const payload = bodySchema.parse(request.body);
+        const ownerId = request.user.userId;
+        const rawSlug = normalizeSlug(payload.slug);
+        if (!slugSchema.safeParse(rawSlug).success || RESERVED_SLUGS.has(rawSlug)) {
+            return reply.code(400).send({ error: 'Invalid or reserved slug' });
+        }
+        const existing = await server.db.query('SELECT 1 FROM storefronts WHERE slug = $1', [rawSlug]);
+        if (existing.rowCount > 0) {
+            return reply.code(409).send({ error: 'Slug already taken' });
+        }
+        // load templates dynamically
+        let templatesModule = null;
+        try {
+            templatesModule = await import(path.resolve(process.cwd(), 'data', 'storefrontTemplates'));
+        }
+        catch (err) {
+            server.log.error({ err }, 'failed to load templates');
+        }
+        let templateHtml = '';
+        if (templatesModule && templatesModule.STOREFRONT_TEMPLATES) {
+            const all = Object.values(templatesModule.STOREFRONT_TEMPLATES).flat();
+            const tpl = all.find((t) => t.id === payload.template_id);
+            if (tpl)
+                templateHtml = tpl.html;
+        }
+        // simple placeholder replacements
+        const replaced = templateHtml
+            .replace(/{{FPO Name}}/g, payload.name)
+            .replace(/{{Facility Name}}/g, payload.name)
+            .replace(/{{Brand Name}}/g, payload.name)
+            .replace(/{{State}}/g, '')
+            .replace(/{{phone}}/g, '');
+        const storeId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`.slice(0, 25);
+        const insert = await server.db.query(`INSERT INTO storefronts(store_id, owner_id, slug, name, description, template_used, published, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,FALSE,NOW(),NOW()) RETURNING *`, [storeId, ownerId, rawSlug, payload.name, payload.description ?? '', payload.template_id]);
+        // save initial page JSON to Mongo for editor
+        await pageCollection.replaceOne({ store_id: storeId }, { store_id: storeId, page_json: {}, html: replaced, css: '', updated_at: new Date() }, { upsert: true });
+        return reply.code(201).send({ store_id: storeId, editor_url: `/store-builder/${storeId}/editor` });
+    });
+    // Get storefront details (owner-only)
+    server.get('/storefronts/:store_id', { preHandler: server.authenticate }, async (request, reply) => {
+        const { store_id } = request.params;
+        const userId = request.user.userId;
+        const res = await server.db.query('SELECT * FROM storefronts WHERE store_id = $1 AND owner_id = $2', [store_id, userId]);
+        if (res.rowCount === 0)
+            return reply.code(404).send({ error: 'Not found' });
+        return reply.send(res.rows[0]);
+    });
+    // Update storefront (owner-only)
+    server.patch('/storefronts/:store_id', { preHandler: server.authenticate }, async (request, reply) => {
+        const { store_id } = request.params;
+        const userId = request.user.userId;
+        const body = z.object({ name: z.string().optional(), slug: z.string().optional(), description: z.string().optional() }).parse(request.body);
+        const storefront = await verifyOwnership(server, store_id, userId);
+        if (!storefront)
+            return reply.code(403).send({ error: 'Not authorized' });
+        const updates = [];
+        const values = [];
+        let idx = 1;
+        if (body.name) {
+            updates.push(`name = $${idx++}`);
+            values.push(body.name);
+        }
+        if (body.description) {
+            updates.push(`description = $${idx++}`);
+            values.push(body.description);
+        }
+        if (body.slug) {
+            const rawSlug = normalizeSlug(body.slug);
+            if (!slugSchema.safeParse(rawSlug).success || RESERVED_SLUGS.has(rawSlug))
+                return reply.code(400).send({ error: 'Invalid slug' });
+            const exists = await server.db.query('SELECT 1 FROM storefronts WHERE slug = $1 AND store_id <> $2', [rawSlug, store_id]);
+            if (exists.rowCount > 0)
+                return reply.code(409).send({ error: 'Slug already taken' });
+            updates.push(`slug = $${idx++}`);
+            values.push(rawSlug);
+        }
+        if (updates.length === 0)
+            return reply.send({ updated: false });
+        values.push(store_id);
+        const sql = `UPDATE storefronts SET ${updates.join(', ')}, updated_at = NOW() WHERE store_id = $${idx} RETURNING *`;
+        const res = await server.db.query(sql, values);
+        return reply.send(res.rows[0]);
+    });
+    // Return QR URLs (PNG/SVG) for storefront
+    server.get('/storefronts/:store_id/qr', { preHandler: server.authenticate }, async (request, reply) => {
+        const { store_id } = request.params;
+        const userId = request.user.userId;
+        const storefront = await verifyOwnership(server, store_id, userId);
+        if (!storefront)
+            return reply.code(403).send({ error: 'Not authorized' });
+        const bucket = server.storage.bucketName;
+        const qrPngKey = `storefronts/${store_id}/qr.png`;
+        const qrSvgKey = `storefronts/${store_id}/qr.svg`;
+        const cdnBase = server.storage.cloudfrontDomain ? server.storage.cloudfrontDomain.replace(/\/$/, '') : process.env.CDN_BASE ?? '';
+        return reply.send({ qr_png_url: `${cdnBase}/${qrPngKey}`, qr_svg_url: `${cdnBase}/${qrSvgKey}` });
+    });
+    // Upgrade storefront plan
+    server.post('/storefronts/:store_id/upgrade', { preHandler: server.authenticate }, async (request, reply) => {
+        const { store_id } = request.params;
+        const { plan } = z.object({ plan: z.string() }).parse(request.body);
+        const userId = request.user.userId;
+        const storefront = await verifyOwnership(server, store_id, userId);
+        if (!storefront)
+            return reply.code(403).send({ error: 'Not authorized' });
+        await server.db.query('UPDATE storefronts SET plan = $1, updated_at = NOW() WHERE store_id = $2', [plan, store_id]);
+        return reply.send({ upgraded: true, plan });
+    });
+    // List templates
+    server.get('/storefronts/templates', async (request, reply) => {
+        let templatesModule = null;
+        try {
+            templatesModule = await import(path.resolve(process.cwd(), 'data', 'storefrontTemplates'));
+        }
+        catch (err) {
+            server.log.error({ err }, 'failed to load templates');
+        }
+        if (!templatesModule || !templatesModule.STOREFRONT_TEMPLATES)
+            return reply.send([]);
+        const flat = Object.values(templatesModule.STOREFRONT_TEMPLATES).flat();
+        const list = flat.map((t) => ({ id: t.id, name: t.name, thumbnail: t.thumbnail, description: t.description }));
+        return reply.send(list);
+    });
+    // Sitemap endpoint for storefronts
+    server.get('/storefronts/sitemap', async (request, reply) => {
+        const result = await server.db.query(`
+      SELECT slug, updated_at
+      FROM storefronts
+      WHERE published = TRUE
+      ORDER BY updated_at DESC
+      LIMIT 50000
+    `);
+        const rows = result.rows;
+        const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${rows.map((s) => `  <url>\n    <loc>https://${s.slug}.kisandirect.in</loc>\n    <lastmod>${new Date(s.updated_at).toISOString().split('T')[0]}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.6</priority>\n  </url>`).join('\n')}\n</urlset>`;
+        reply.header('Content-Type', 'application/xml');
+        return reply.send(xml);
+    });
+    // Owner-only analytics endpoint (default last 30 days)
+    server.get('/storefronts/:store_id/analytics', { preHandler: server.authenticate }, async (request, reply) => {
+        const { store_id } = request.params;
+        const userId = request.user.userId;
+        const storefront = await verifyOwnership(server, store_id, userId);
+        if (!storefront)
+            return reply.code(403).send({ error: 'Not authorized' });
+        const daysParam = request.query?.days ?? '30';
+        const days = Number(daysParam) || 30;
+        const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        const [viewsRes, eventsRes, sourcesRes, devicesRes, geoRes, summaryRes] = await Promise.all([
+            server.db.query(`
+        SELECT DATE_TRUNC('day', recorded_at) as day, COUNT(*) as views
+        FROM storefront_analytics
+        WHERE store_id = $1 AND event_type = 'PAGE_VIEW' AND recorded_at >= $2
+        GROUP BY day ORDER BY day
+      `, [store_id, from]),
+            server.db.query(`
+        SELECT event_type, COUNT(*) as count
+        FROM storefront_analytics
+        WHERE store_id = $1 AND recorded_at >= $2
+        GROUP BY event_type
+      `, [store_id, from]),
+            server.db.query(`
+        SELECT 
+          CASE 
+            WHEN referrer LIKE '%wa.me%' OR referrer LIKE '%whatsapp%' THEN 'WhatsApp'
+            WHEN referrer IS NULL OR referrer = '' THEN 'Direct'
+            WHEN referrer LIKE '%google%' THEN 'Google'
+            ELSE 'Other'
+          END as source,
+          COUNT(*) as count
+        FROM storefront_analytics
+        WHERE store_id = $1 AND event_type = 'PAGE_VIEW' AND recorded_at >= $2
+        GROUP BY source
+      `, [store_id, from]),
+            server.db.query(`
+        SELECT device_type, COUNT(*) as count
+        FROM storefront_analytics
+        WHERE store_id = $1 AND recorded_at >= $2
+        GROUP BY device_type
+      `, [store_id, from]),
+            server.db.query(`
+        SELECT visitor_state, COUNT(*) as views
+        FROM storefront_analytics
+        WHERE store_id = $1 AND recorded_at >= $2 AND visitor_state IS NOT NULL
+        GROUP BY visitor_state ORDER BY views DESC LIMIT 10
+      `, [store_id, from]),
+            // summary counts: today, week, month and specific event counts
+            server.db.query(`
+        SELECT
+          SUM(CASE WHEN recorded_at >= date_trunc('day', now()) THEN 1 ELSE 0 END) AS today,
+          SUM(CASE WHEN recorded_at >= now() - INTERVAL '7 days' THEN 1 ELSE 0 END) AS week,
+          SUM(CASE WHEN recorded_at >= now() - INTERVAL '30 days' THEN 1 ELSE 0 END) AS month,
+          SUM(CASE WHEN event_type = 'LISTING_CLICK' THEN 1 ELSE 0 END) AS listing_clicks,
+          SUM(CASE WHEN event_type = 'WHATSAPP_TAP' THEN 1 ELSE 0 END) AS whatsapp_taps,
+          SUM(CASE WHEN event_type = 'CONTACT_SUBMIT' THEN 1 ELSE 0 END) AS contact_submits
+        FROM storefront_analytics
+        WHERE store_id = $1
+      `, [store_id])
+        ]);
+        const daily_views = viewsRes.rows;
+        const event_breakdown = eventsRes.rows;
+        const traffic_sources = sourcesRes.rows;
+        const devices = devicesRes.rows;
+        const top_states = geoRes.rows;
+        const summaryRow = summaryRes.rows[0] ?? {};
+        return reply.send({ daily_views, event_breakdown, traffic_sources, devices, top_states, summary: {
+                today: Number(summaryRow.today ?? 0),
+                week: Number(summaryRow.week ?? 0),
+                month: Number(summaryRow.month ?? 0),
+                listing_clicks: Number(summaryRow.listing_clicks ?? 0),
+                whatsapp_taps: Number(summaryRow.whatsapp_taps ?? 0),
+                contact_submits: Number(summaryRow.contact_submits ?? 0)
+            } });
     });
     server.get('/storefronts/:store_id/page-json', { preHandler: server.authenticate }, async (request, reply) => {
         const { store_id } = request.params;

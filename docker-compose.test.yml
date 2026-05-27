@@ -1,0 +1,21 @@
+version: '3.8'
+services:
+  postgres_test:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: kisandirect_test
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test -d kisandirect_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_test_data:

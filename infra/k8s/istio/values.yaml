@@ -1,0 +1,21 @@
+profile: default
+
+global:
+  proxy:
+    autoInject: true
+  mtu: 1500
+
+pilot:
+  autoscaleEnabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+gateways:
+  istio-ingressgateway:
+    type: ClusterIP
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
