@@ -201,6 +201,11 @@ export function createOrderService(server) {
             if (!razorpayPaymentId) {
                 throw server.httpErrors.badRequest('Missing payment id');
             }
+            // Idempotency: if payment already recorded for this payment id, ignore replayed webhook
+            if (order.payment_status === 'ESCROW_HELD' && order.razorpay_payment_id === razorpayPaymentId) {
+                server.log.info({ order_id: order.order_id, razorpay_payment_id: razorpayPaymentId }, 'Ignoring duplicate payment.captured webhook (idempotent)');
+                return { received: true };
+            }
             if (amount !== Number(order.total_paise)) {
                 throw server.httpErrors.badRequest('Payment amount mismatch');
             }

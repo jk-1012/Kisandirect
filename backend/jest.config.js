@@ -5,6 +5,7 @@ export default {
   moduleFileExtensions: ['ts', 'js', 'json'],
   testMatch: ['**/?(*.)+(spec|test).[tj]s?(x)'],
   testPathIgnorePatterns: ['/node_modules/', '/dist/'],
+  transformIgnorePatterns: ['/node_modules/(?!(msw|@mswjs/interceptors|rettime)/)'],
   transform: {
     '^.+\\.ts$': ['ts-jest', { useESM: true, tsconfig: 'tsconfig.json' }]
   },

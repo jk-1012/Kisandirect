@@ -51,8 +51,10 @@ export const metrics = {
   }),
 };
 
+import { FastifyInstance } from 'fastify';
+
 // Metrics endpoint helper
-export function registerMetricsRoute(app) {
+export function registerMetricsRoute(app: FastifyInstance) {
   app.get('/metrics', async (req, res) => {
     res.header('Content-Type', register.contentType);
     return register.metrics();

@@ -51,7 +51,6 @@ const nextConfig = {
   },
 
   experimental: {
-    appDir: true,
     optimizeCss: true,         // inline critical CSS
     optimizePackageImports: ['lucide-react', '@radix-ui/react-icons', 'recharts'],
   },

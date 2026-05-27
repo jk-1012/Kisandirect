@@ -1,0 +1,18 @@
+{
+  "app/agristore/builder/page.tsx -> grapesjs": {
+    "id": 1246,
+    "files": [
+      "static/chunks/22b61bf7.4ca1308f102fb51a.js",
+      "static/chunks/465.1f004f92b2f1383b.js"
+    ]
+  },
+  "app/store-builder/[store_id]/editor/page.tsx -> ../../../../components/AgriStoreEditor": {
+    "id": 3937,
+    "files": [
+      "static/css/6ba313166a4547e9.css",
+      "static/chunks/22b61bf7.4ca1308f102fb51a.js",
+      "static/chunks/465.1f004f92b2f1383b.js",
+      "static/chunks/937.078b7ff1798c867a.js"
+    ]
+  }
+}

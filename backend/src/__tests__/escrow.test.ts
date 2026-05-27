@@ -1,12 +1,12 @@
 import request from 'supertest'
-import buildApp from '../index' // assumes Fastify app factory exported
+import { buildApp } from '../app'
 import { beginTransaction, rollbackTransaction } from './helpers/db'
 
 let app: any
 let client: any
 
 beforeAll(async () => {
-  app = await buildApp({})
+  app = await buildApp()
 })
 
 afterAll(async () => {
