@@ -1,5 +1,5 @@
 import request from 'supertest'
-import buildApp from '../../index' // assumes Fastify app factory exported
+import buildApp from '../index' // assumes Fastify app factory exported
 import { beginTransaction, rollbackTransaction } from './helpers/db'
 
 let app: any

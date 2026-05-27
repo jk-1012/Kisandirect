@@ -1,9 +1,9 @@
 import fp from 'fastify-plugin';
 import { Pool } from 'pg';
 export const dbPlugin = fp(async (server) => {
-    const connectionString = process.env.DATABASE_URL;
+    const connectionString = process.env.DATABASE_URL || process.env.TEST_DATABASE_URL;
     if (!connectionString) {
-        throw new Error('DATABASE_URL is required');
+        throw new Error('DATABASE_URL or TEST_DATABASE_URL is required');
     }
     const pool = new Pool({ connectionString });
     await pool.query('SELECT 1');
