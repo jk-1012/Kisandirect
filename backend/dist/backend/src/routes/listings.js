@@ -65,7 +65,7 @@ export default async function (server) {
         const response = await listingService.processPhoto(request.user.userId, body.s3Key);
         return reply.send(response);
     });
-    server.post('/listings', { preHandler: [server.authenticate, server.requireKYC] }, async (request, reply) => {
+    server.post('/listings', { preHandler: [server.authenticate, server.requireKYC, server.requireIdempotency] }, async (request, reply) => {
         const payload = listingCreateSchema.parse(request.body);
         const listing = await listingService.createListing(request.user.userId, payload);
         return reply.code(201).send(listing);
@@ -118,7 +118,7 @@ export default async function (server) {
         return reply.send(results);
     });
     const offerCreateSchema = z.object({ quantity_kg: z.coerce.number().positive(), offer_price_per_kg_inr: z.number().min(0.01) });
-    server.post('/listings/:listingId/offers', { preHandler: [server.authenticate] }, async (request, reply) => {
+    server.post('/listings/:listingId/offers', { preHandler: [server.authenticate, server.requireIdempotency] }, async (request, reply) => {
         const { listingId } = request.params;
         const payload = offerCreateSchema.parse(request.body);
         const buyerId = request.user.userId;

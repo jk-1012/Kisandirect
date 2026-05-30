@@ -10,7 +10,8 @@ async function translateText(server, text, targetLanguage) {
     const apiUrl = process.env.BHASHINI_API_URL;
     const apiToken = process.env.BHASHINI_API_TOKEN;
     if (!apiUrl || !apiToken) {
-        return text;
+        server.log.info('Bhashini API not configured. Using mock translation.');
+        return `[${targetLanguage.toUpperCase()}] ${text}`;
     }
     try {
         const response = await fetch(`${apiUrl}/translate`, {

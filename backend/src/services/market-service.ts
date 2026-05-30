@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { createNotificationService } from './notification-service.js';
-import { CROP_TAXONOMY } from '../../../data/cropTaxonomy.js';
+import { CROP_TAXONOMY } from '../../../data/cropTaxonomy.ts';
 
 const priceAlertSchema = z.object({
   crop_type: z.string().transform((value) => value.toUpperCase().trim()).refine((value) => Object.values(CROP_TAXONOMY).flatMap((category) => Object.keys(category)).includes(value), 'Unsupported crop type'),

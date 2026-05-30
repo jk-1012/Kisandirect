@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import { CROP_TAXONOMY } from '../../../data/cropTaxonomy.js';
+import { CROP_TAXONOMY } from '../../../data/cropTaxonomy.ts';
 
 export const INDEX_LISTING_TO_ES = 'INDEX_LISTING_TO_ES';
 

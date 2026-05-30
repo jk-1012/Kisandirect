@@ -2,7 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import crypto from 'crypto';
 import { generateUniqueKisanId } from '../utils/kisanId.js';
-import { CROP_TAXONOMY } from '../../../data/cropTaxonomy.js';
+import { CROP_TAXONOMY } from '../../../data/cropTaxonomy.ts';
 
 const languageSchema = z.enum(['hi', 'kn', 'te', 'ta', 'mr', 'gu', 'bn', 'or', 'pa', 'ml', 'as', 'en']);
 

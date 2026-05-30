@@ -28,13 +28,13 @@ const rfqSchema = z.object({
 export default async function (server) {
     const orderService = createOrderService(server);
     const challanService = createChallanService(server);
-    server.post('/orders/buy-now', { preHandler: [server.authenticate] }, async (request, reply) => {
+    server.post('/orders/buy-now', { preHandler: [server.authenticate, server.requireIdempotency] }, async (request, reply) => {
         const payload = buyNowSchema.parse(request.body);
         const buyerId = request.user.userId;
         const result = await orderService.createBuyNowOrder(buyerId, payload.listing_id, payload.quantity_kg, payload.delivery_requested, payload.delivery_address);
         return reply.code(201).send(result);
     });
-    server.post('/orders/make-offer', { preHandler: [server.authenticate] }, async (request, reply) => {
+    server.post('/orders/make-offer', { preHandler: [server.authenticate, server.requireIdempotency] }, async (request, reply) => {
         const payload = offerSchema.parse(request.body);
         const buyerId = request.user.userId;
         const result = await orderService.createOfferOrder(buyerId, payload.listing_id, payload.quantity_kg, payload.offer_price_per_kg_inr);

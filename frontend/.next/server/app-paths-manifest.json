@@ -1,24 +1,6 @@
 {
   "/_not-found/page": "app/_not-found/page.js",
   "/[lang]/page": "app/[lang]/page.js",
-  "/api/auth/set-cookie/route": "app/api/auth/set-cookie/route.js",
-  "/agristore/builder/page": "app/agristore/builder/page.js",
-  "/api/sitemap/catalogue.xml/route": "app/api/sitemap/catalogue.xml/route.js",
-  "/farmers/onboard/page": "app/farmers/onboard/page.js",
-  "/listings/[listing_id]/page": "app/listings/[listing_id]/page.js",
-  "/notifications/page": "app/notifications/page.js",
-  "/farmers/transactions/page": "app/farmers/transactions/page.js",
   "/page": "app/page.js",
-  "/register/bank/page": "app/register/bank/page.js",
-  "/register/kyc/page": "app/register/kyc/page.js",
-  "/register/mobile/page": "app/register/mobile/page.js",
-  "/register/otp/page": "app/register/otp/page.js",
-  "/register/page": "app/register/page.js",
-  "/rfq/[rfq_id]/quotes/page": "app/rfq/[rfq_id]/quotes/page.js",
-  "/rfq/create/page": "app/rfq/create/page.js",
-  "/sitemap-storefronts.xml/route": "app/sitemap-storefronts.xml/route.js",
-  "/store-builder/[store_id]/editor/page": "app/store-builder/[store_id]/editor/page.js",
-  "/store/[slug]/page": "app/store/[slug]/page.js",
-  "/buy/[state]/[crop-type]/page": "app/buy/[state]/[crop-type]/page.js",
-  "/store-builder/[store_id]/analytics/page": "app/store-builder/[store_id]/analytics/page.js"
+  "/farmers/onboard/page": "app/farmers/onboard/page.js"
 }

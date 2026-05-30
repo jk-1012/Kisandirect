@@ -32,7 +32,8 @@ export default fp(async function (server: FastifyInstance, opts: IdempotencyOpti
     }
 
     // Capture the response after execution
-    reply.addHook('onSend', async (request, reply, payload) => {
+    const replyWithAddHook = reply as FastifyReply & { addHook?: (name: string, hook: (request: FastifyRequest, reply: FastifyReply, payload: unknown) => Promise<unknown> | unknown) => void };
+    replyWithAddHook.addHook?.('onSend', async (request, reply, payload) => {
       // Only cache successful or client error responses, not 5xx
       if (reply.statusCode < 500) {
         let parsedPayload = payload;
