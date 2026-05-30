@@ -34,7 +34,7 @@ export default async function (server: FastifyInstance) {
   const orderService = createOrderService(server);
   const challanService = createChallanService(server);
 
-  server.post('/orders/buy-now', { preHandler: [server.authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
+  server.post('/orders/buy-now', { preHandler: [server.authenticate, server.requireIdempotency] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const payload = buyNowSchema.parse(request.body as Record<string, unknown>);
     const buyerId = request.user.userId;
     const result = await orderService.createBuyNowOrder(
@@ -47,7 +47,7 @@ export default async function (server: FastifyInstance) {
     return reply.code(201).send(result);
   });
 
-  server.post('/orders/make-offer', { preHandler: [server.authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
+  server.post('/orders/make-offer', { preHandler: [server.authenticate, server.requireIdempotency] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const payload = offerSchema.parse(request.body as Record<string, unknown>);
     const buyerId = request.user.userId;
     const result = await orderService.createOfferOrder(buyerId, payload.listing_id, payload.quantity_kg, payload.offer_price_per_kg_inr);

@@ -76,7 +76,7 @@ export default async function (server: FastifyInstance) {
     return reply.send(response);
   });
 
-  server.post('/listings', { preHandler: [server.authenticate, server.requireKYC] }, async (request: FastifyRequest, reply: FastifyReply) => {
+  server.post('/listings', { preHandler: [server.authenticate, server.requireKYC, server.requireIdempotency] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const payload = listingCreateSchema.parse(request.body as Record<string, unknown>);
     const listing = await listingService.createListing(request.user.userId, payload);
     return reply.code(201).send(listing);
@@ -138,7 +138,7 @@ export default async function (server: FastifyInstance) {
 
   const offerCreateSchema = z.object({ quantity_kg: z.coerce.number().positive(), offer_price_per_kg_inr: z.number().min(0.01) });
 
-  server.post('/listings/:listingId/offers', { preHandler: [server.authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
+  server.post('/listings/:listingId/offers', { preHandler: [server.authenticate, server.requireIdempotency] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { listingId } = request.params as { listingId: string };
     const payload = offerCreateSchema.parse(request.body as Record<string, unknown>);
     const buyerId = request.user.userId;
