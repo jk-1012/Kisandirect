@@ -1,0 +1,502 @@
+/**
+ * Queue Manager
+ * Centralized management of all BullMQ queues with health monitoring,
+ * metrics, graceful shutdown, and connection recovery
+ */
+
+import { Queue, Worker, QueueEvents, Job } from 'bullmq';
+import { Redis } from 'ioredis';
+import { FastifyInstance } from 'fastify';
+
+export interface QueueConfig {
+  name: string;
+  defaultJobOptions?: {
+    attempts?: number;
+    backoff?: { type: string; delay: number };
+    removeOnComplete?: boolean | { age: number };
+    removeOnFail?: boolean;
+    priority?: number;
+  };
+  concurrency?: number;
+  settings?: {
+    maxStalledCount?: number;
+    maxStalledInterval?: number;
+    lockDuration?: number;
+    lockRenewTime?: number;
+  };
+}
+
+export interface WorkerHandler {
+  (job: Job, server: FastifyInstance): Promise<any>;
+}
+
+export interface QueueMetrics {
+  name: string;
+  queueSize: number;
+  activeCount: number;
+  completedCount: number;
+  failedCount: number;
+  delayedCount: number;
+  paused?: boolean;
+  isPaused?: boolean;
+  processingTime?: number;
+  errorRate: number;
+  avgProcessingTime: number;
+}
+
+export class QueueManager {
+  private queues = new Map<string, Queue>();
+  private workers = new Map<string, Worker>();
+  private queueEvents = new Map<string, QueueEvents>();
+  private connection: Redis;
+  private server: FastifyInstance;
+  private metrics = new Map<string, any>();
+  private healthCheckInterval: NodeJS.Timeout | null = null;
+  private metricsInterval: NodeJS.Timeout | null = null;
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 10;
+  private reconnectDelay = 1000;
+
+  constructor(connection: Redis, server: FastifyInstance) {
+    this.connection = connection;
+    this.server = server;
+
+    // Setup connection listeners
+    this.setupConnectionHandlers();
+  }
+
+  private setupConnectionHandlers() {
+    this.connection.on('error', (err) => {
+      this.server.log.error({ error: err }, 'Redis connection error');
+      this.attemptReconnect();
+    });
+
+    this.connection.on('reconnecting', () => {
+      this.server.log.warn({ attempt: this.reconnectAttempts }, 'Redis reconnecting');
+    });
+
+    this.connection.on('connected', () => {
+      this.server.log.info('Redis connected');
+      this.reconnectAttempts = 0;
+    });
+  }
+
+  private attemptReconnect() {
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++;
+      const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 30000);
+      setTimeout(() => {
+        this.server.log.info({ attempt: this.reconnectAttempts, delay }, 'Attempting Redis reconnect');
+        this.connection.connect().catch(() => {
+          this.attemptReconnect();
+        });
+      }, delay);
+    } else {
+      this.server.log.error('Max Redis reconnect attempts exceeded');
+    }
+  }
+
+  /**
+   * Register a queue with centralized configuration
+   */
+  async registerQueue(config: QueueConfig): Promise<Queue> {
+    if (this.queues.has(config.name)) {
+      return this.queues.get(config.name)!;
+    }
+
+    const queueConfig: any = {
+      connection: this.connection,
+      ...config.settings,
+    };
+
+    // Add default job options to queue config
+    if (config.defaultJobOptions) {
+      queueConfig.defaultJobOptions = config.defaultJobOptions;
+    }
+
+    const queue = new Queue(config.name, queueConfig);
+
+    // Initialize metrics
+    this.metrics.set(config.name, {
+      name: config.name,
+      createdAt: new Date(),
+      totalProcessed: 0,
+      totalFailed: 0,
+      totalRetried: 0,
+      lastProcessedAt: null,
+      processingTimes: [] as number[],
+    });
+
+    this.queues.set(config.name, queue);
+
+    // Setup queue events
+    const events = new QueueEvents(config.name, { connection: this.connection });
+    this.queueEvents.set(config.name, events);
+
+    // Log queue events
+    events.on('error', (err) => {
+      this.server.log.error({ queue: config.name, error: err }, 'Queue event error');
+    });
+
+    this.server.log.info({ queue: config.name }, 'Queue registered');
+    return queue;
+  }
+
+  /**
+   * Register a worker for a queue
+   */
+  async registerWorker(
+    queueName: string,
+    handler: WorkerHandler,
+    concurrency: number = 5,
+  ): Promise<Worker> {
+    if (this.workers.has(queueName)) {
+      this.server.log.warn({ queue: queueName }, 'Worker already registered for queue');
+      return this.workers.get(queueName)!;
+    }
+
+    const queue = this.queues.get(queueName);
+    if (!queue) {
+      throw new Error(`Queue ${queueName} not registered`);
+    }
+
+    const worker = new Worker(
+      queueName,
+      async (job: Job) => {
+        const startTime = Date.now();
+        const jobMetrics = this.metrics.get(queueName);
+
+        try {
+          this.server.log.info(
+            { queue: queueName, jobId: job.id, jobName: job.name, data: job.data },
+            'Job processing started',
+          );
+
+          const result = await handler(job, this.server);
+
+          const processingTime = Date.now() - startTime;
+          jobMetrics.totalProcessed++;
+          jobMetrics.lastProcessedAt = new Date();
+          jobMetrics.processingTimes.push(processingTime);
+          // Keep only last 100 times
+          if (jobMetrics.processingTimes.length > 100) {
+            jobMetrics.processingTimes.shift();
+          }
+
+          this.server.log.info(
+            {
+              queue: queueName,
+              jobId: job.id,
+              processingTime,
+              totalProcessed: jobMetrics.totalProcessed,
+            },
+            'Job processing completed',
+          );
+
+          return result;
+        } catch (error) {
+          const processingTime = Date.now() - startTime;
+          jobMetrics.totalFailed++;
+
+          this.server.log.error(
+            {
+              queue: queueName,
+              jobId: job.id,
+              jobName: job.name,
+              error,
+              processingTime,
+              attempts: job.attemptsMade,
+              maxAttempts: job.opts.attempts,
+            },
+            'Job processing failed',
+          );
+
+          throw error;
+        }
+      },
+      {
+        connection: this.connection,
+        concurrency,
+      },
+    );
+
+    // Setup worker event listeners
+    worker.on('completed', (job) => {
+      this.server.log.debug({ queue: queueName, jobId: job.id }, 'Job completed');
+    });
+
+    worker.on('failed', (job, err) => {
+      this.server.log.warn(
+        { queue: queueName, jobId: job?.id, error: err, attempts: job?.attemptsMade },
+        'Job failed',
+      );
+    });
+
+    worker.on('stalled', (jobId: string) => {
+      this.server.log.warn({ queue: queueName, jobId }, 'Job stalled');
+    });
+
+    worker.on('error', (err) => {
+      this.server.log.error({ queue: queueName, error: err }, 'Worker error');
+    });
+
+    this.workers.set(queueName, worker);
+    this.server.log.info({ queue: queueName, concurrency }, 'Worker registered');
+
+    return worker;
+  }
+
+  /**
+   * Get all queue metrics
+   */
+  async getQueueMetrics(): Promise<QueueMetrics[]> {
+    const metrics: QueueMetrics[] = [];
+
+    for (const [queueName, queue] of this.queues) {
+      const counts = (await (queue as any).getCountsPerStatus?.()) ?? {
+        waiting: 0,
+        active: 0,
+        completed: 0,
+        failed: 0,
+        delayed: 0,
+      };
+
+      const queueMetrics = this.metrics.get(queueName);
+      const isPausedValue = (queue as any).isPaused;
+      const isPausedVal = typeof isPausedValue === 'function' ? await isPausedValue() : Boolean(isPausedValue);
+
+      const activeCount = counts.active || 0;
+      const completedCount = counts.completed || 0;
+      const failedCount = counts.failed || 0;
+      const delayedCount = counts.delayed || 0;
+
+      const avgProcessingTime =
+        queueMetrics?.processingTimes?.length > 0
+          ? queueMetrics.processingTimes.reduce((a: number, b: number) => a + b) /
+            queueMetrics.processingTimes.length
+          : 0;
+
+      const totalJobs = queueMetrics?.totalProcessed ?? 0;
+      const failedJobs = queueMetrics?.totalFailed ?? 0;
+      const errorRate = totalJobs > 0 ? (failedJobs / (totalJobs + failedJobs)) * 100 : 0;
+
+      metrics.push({
+        name: queueName,
+        queueSize: counts.waiting || 0,
+        activeCount,
+        completedCount,
+        failedCount,
+        delayedCount,
+        paused: isPausedVal,
+        isPaused: isPausedVal,
+        processingTime: queueMetrics?.processingTimes?.[queueMetrics.processingTimes.length - 1],
+        errorRate: Math.round(errorRate * 100) / 100,
+        avgProcessingTime: Math.round(avgProcessingTime * 100) / 100,
+      });
+    }
+
+    return metrics;
+  }
+
+  /**
+   * Start health check monitoring
+   */
+  startHealthChecks(intervalMs: number = 30000) {
+    if (this.healthCheckInterval) {
+      return;
+    }
+
+    this.healthCheckInterval = setInterval(async () => {
+      try {
+        const metrics = await this.getQueueMetrics();
+
+        for (const metric of metrics) {
+          // Alert on high failure rate
+          if ((metric.errorRate ?? 0) > 10) {
+            this.server.log.warn(
+              { queue: metric.name, errorRate: metric.errorRate, failedCount: metric.failedCount },
+              'High error rate detected',
+            );
+          }
+
+          // Alert on stalled jobs
+          if (metric.activeCount > 100) {
+            this.server.log.warn(
+              { queue: metric.name, activeCount: metric.activeCount },
+              'High number of active jobs',
+            );
+          }
+
+          // Alert on queue backlog
+          if (metric.queueSize > 1000) {
+            this.server.log.warn(
+              { queue: metric.name, queueSize: metric.queueSize },
+              'Large queue backlog detected',
+            );
+          }
+        }
+
+        this.server.log.debug({ metrics }, 'Queue health check completed');
+      } catch (error) {
+        this.server.log.error({ error }, 'Health check failed');
+      }
+    }, intervalMs);
+
+    this.server.log.info({ intervalMs }, 'Queue health checks started');
+  }
+
+  /**
+   * Stop health check monitoring
+   */
+  stopHealthChecks() {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval as any);
+      this.healthCheckInterval = null;
+      this.server.log.info('Queue health checks stopped');
+    }
+  }
+
+  /**
+   * Start metrics collection
+   */
+  startMetricsCollection(intervalMs: number = 60000) {
+    if (this.metricsInterval) {
+      return;
+    }
+
+    this.metricsInterval = setInterval(async () => {
+      try {
+        const metrics = await this.getQueueMetrics();
+        // Store metrics in memory or send to monitoring service
+        this.server.log.debug({ metrics }, 'Metrics collected');
+      } catch (error) {
+        this.server.log.error({ error }, 'Metrics collection failed');
+      }
+    }, intervalMs);
+
+    this.server.log.info({ intervalMs }, 'Metrics collection started');
+  }
+
+  /**
+   * Stop metrics collection
+   */
+  stopMetricsCollection() {
+    if (this.metricsInterval) {
+      clearInterval(this.metricsInterval as any);
+      this.metricsInterval = null;
+      this.server.log.info('Metrics collection stopped');
+    }
+  }
+
+  /**
+   * Get queue by name
+   */
+  getQueue(name: string): Queue | undefined {
+    return this.queues.get(name);
+  }
+
+  /**
+   * Get all queues
+   */
+  getAllQueues(): Map<string, Queue> {
+    return this.queues;
+  }
+
+  /**
+   * Drain a queue (remove all jobs)
+   */
+  async drainQueue(queueName: string, _status?: string): Promise<void> {
+    const queue = this.queues.get(queueName);
+    if (!queue) {
+      throw new Error(`Queue ${queueName} not found`);
+    }
+
+    await (queue as any).drain?.();
+    this.server.log.info({ queue: queueName }, 'Queue drained');
+  }
+
+  /**
+   * Pause a queue
+   */
+  async pauseQueue(queueName: string): Promise<void> {
+    const queue = this.queues.get(queueName);
+    if (!queue) {
+      throw new Error(`Queue ${queueName} not found`);
+    }
+
+    await queue.pause();
+    this.server.log.info({ queue: queueName }, 'Queue paused');
+  }
+
+  /**
+   * Resume a queue
+   */
+  async resumeQueue(queueName: string): Promise<void> {
+    const queue = this.queues.get(queueName);
+    if (!queue) {
+      throw new Error(`Queue ${queueName} not found`);
+    }
+
+    await queue.resume();
+    this.server.log.info({ queue: queueName }, 'Queue resumed');
+  }
+
+  /**
+   * Clean up old jobs
+   */
+  async cleanOldJobs(queueName: string, olderThanMs: number = 7 * 24 * 60 * 60 * 1000): Promise<void> {
+    const queue = this.queues.get(queueName);
+    if (!queue) {
+      throw new Error(`Queue ${queueName} not found`);
+    }
+
+    await (queue as any).clean?.(olderThanMs, 1000);
+    this.server.log.info({ queue: queueName, olderThanMs }, 'Old jobs cleaned');
+  }
+
+  /**
+   * Graceful shutdown
+   */
+  async shutdown() {
+    this.stopHealthChecks();
+    this.stopMetricsCollection();
+
+    this.server.log.info('Shutting down queue manager');
+
+    // Close all workers
+    for (const [queueName, worker] of this.workers) {
+      try {
+        await worker.close();
+        this.server.log.info({ queue: queueName }, 'Worker closed');
+      } catch (error) {
+        this.server.log.error({ queue: queueName, error }, 'Error closing worker');
+      }
+    }
+
+    // Close all queue events
+    for (const [queueName, events] of this.queueEvents) {
+      try {
+        await events.close();
+        this.server.log.info({ queue: queueName }, 'Queue events closed');
+      } catch (error) {
+        this.server.log.error({ queue: queueName, error }, 'Error closing queue events');
+      }
+    }
+
+    // Close all queues
+    for (const [queueName, queue] of this.queues) {
+      try {
+        await queue.close();
+        this.server.log.info({ queue: queueName }, 'Queue closed');
+      } catch (error) {
+        this.server.log.error({ queue: queueName, error }, 'Error closing queue');
+      }
+    }
+
+    this.server.log.info('Queue manager shutdown complete');
+  }
+}
+
+export function createQueueManager(connection: Redis, server: FastifyInstance): QueueManager {
+  return new QueueManager(connection, server);
+}

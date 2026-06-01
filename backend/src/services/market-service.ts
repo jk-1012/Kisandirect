@@ -144,12 +144,12 @@ export function createMarketService(server: FastifyInstance) {
 
   async function triggerPriceAlerts(cropType: string, stateCode: string, currentPricePaise: number) {
     const alertsResult = await server.db.query(
-      `SELECT a.id, a.user_id, a.direction, a.threshold_price_paise, a.last_triggered_at, u.phone, u.language
+      `SELECT a.id, a.farmer_id, a.direction, a.threshold_price_per_kg_inr, a.last_triggered_at, u.phone, u.language
        FROM public.price_alerts a
-       JOIN public.users u ON a.user_id = u.id
+       JOIN public.users u ON a.farmer_id = u.id
        WHERE a.active = true AND a.crop_type = $1 AND a.state_code = $2
-         AND ((a.direction = 'ABOVE' AND a.threshold_price_paise <= $3)
-              OR (a.direction = 'BELOW' AND a.threshold_price_paise >= $3))`,
+         AND ((a.direction = 'ABOVE' AND a.threshold_price_per_kg_inr * 100 <= $3)
+              OR (a.direction = 'BELOW' AND a.threshold_price_per_kg_inr * 100 >= $3))`,
       [cropType, stateCode, currentPricePaise]
     );
 
@@ -162,7 +162,7 @@ export function createMarketService(server: FastifyInstance) {
         continue;
       }
 
-      const threshold = (alert.threshold_price_paise / 100).toFixed(2);
+      const threshold = Number(alert.threshold_price_per_kg_inr).toFixed(2);
       const currentPrice = (currentPricePaise / 100).toFixed(2);
       const directionText = alert.direction === 'ABOVE' ? 'above' : 'below';
       const cropLabel = getCropDisplayName(cropType);
@@ -170,7 +170,7 @@ export function createMarketService(server: FastifyInstance) {
       const body = `Mandi price for ${cropLabel} in ${stateCode} is now ₹${currentPrice}/kg, which is ${directionText} your threshold of ₹${threshold}/kg.`;
 
       await notificationService.createNotification({
-        userId: alert.user_id,
+        userId: alert.farmer_id,
         type: 'PRICE_ALERT',
         title,
         body,
@@ -190,12 +190,11 @@ export function createMarketService(server: FastifyInstance) {
 
   async function createPriceAlert(userId: string, payload: unknown) {
     const validated = priceAlertSchema.parse(payload);
-    const thresholdPaise = Math.round(validated.threshold_price_per_kg_inr * 100);
 
     const insert = await server.db.query(
-      `INSERT INTO public.price_alerts (user_id, crop_type, state_code, direction, threshold_price_paise, active, created_at, updated_at)
+      `INSERT INTO public.price_alerts (farmer_id, crop_type, state_code, direction, threshold_price_per_kg_inr, active, created_at, updated_at)
        VALUES ($1,$2,$3,$4,$5,true,NOW(),NOW()) RETURNING id`,
-      [userId, validated.crop_type, validated.state_code, validated.direction, thresholdPaise]
+      [userId, validated.crop_type, validated.state_code, validated.direction, validated.threshold_price_per_kg_inr]
     );
 
     return { alert_id: insert.rows[0].id };
@@ -203,18 +202,18 @@ export function createMarketService(server: FastifyInstance) {
 
   async function listPriceAlerts(userId: string) {
     const result = await server.db.query(
-      `SELECT id, crop_type, state_code, direction, threshold_price_paise, active, last_triggered_at, created_at, updated_at
-       FROM public.price_alerts WHERE user_id = $1 ORDER BY created_at DESC`,
+      `SELECT id, crop_type, state_code, direction, threshold_price_per_kg_inr, active, last_triggered_at, created_at, updated_at
+       FROM public.price_alerts WHERE farmer_id = $1 ORDER BY created_at DESC`,
       [userId]
     );
     return result.rows.map((alert: any) => ({
       ...alert,
-      threshold_price_per_kg_inr: Number(alert.threshold_price_paise) / 100
+      threshold_price_per_kg_inr: Number(alert.threshold_price_per_kg_inr)
     }));
   }
 
   async function deletePriceAlert(userId: string, alertId: string) {
-    const result = await server.db.query('DELETE FROM public.price_alerts WHERE id = $1 AND user_id = $2 RETURNING id', [alertId, userId]);
+    const result = await server.db.query('DELETE FROM public.price_alerts WHERE id = $1 AND farmer_id = $2 RETURNING id', [alertId, userId]);
     if (result.rows.length === 0) {
       throw server.httpErrors.notFound('Price alert not found');
     }

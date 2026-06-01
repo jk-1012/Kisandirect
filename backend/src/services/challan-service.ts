@@ -30,27 +30,25 @@ export function createChallanService(server: FastifyInstance) {
     }
 
     const verificationToken = crypto.randomBytes(32).toString('hex');
-    const baseUrl = process.env.BASE_URL ?? 'http://localhost:4000';
-    const verificationUrl = `${baseUrl}/verify/challan/${verificationToken}`;
+    const baseUrl = process.env.API_BASE_URL ?? process.env.BASE_URL ?? 'http://localhost:4000';
+    const verificationUrl = `${baseUrl}/api/v1/orders/${orderId}/challan/verify?token=${verificationToken}`;
 
     const html = buildChallanHtml(order, verificationUrl, 'GENERATED');
     const pdfBuffer = await generatePdfBuffer(html);
 
     const objectKey = `challans/${order.order_id}/challan.pdf`;
-    const bucketName = process.env.CHALLAN_S3_BUCKET ?? server.storage.bucketName;
+    const bucketName = process.env.LISTINGS_PHOTO_BUCKET ?? `kisandirect-listings-${(process.env.NODE_ENV ?? 'dev').toLowerCase()}`;
     await server.storage.s3Client.send(
       new PutObjectCommand({
         Bucket: bucketName,
         Key: objectKey,
         Body: pdfBuffer,
         ContentType: 'application/pdf',
-        ACL: 'public-read'
+        ServerSideEncryption: 'AES256'
       })
     );
 
-    const challanUrl = process.env.CHALLAN_CDN_BASE
-      ? `${process.env.CHALLAN_CDN_BASE}/${objectKey}`
-      : `${baseUrl}/${objectKey}`;
+    const challanUrl = `${process.env.CDN_BASE || `https://${bucketName}.s3.${process.env.AWS_REGION ?? 'ap-south-1'}.amazonaws.com`}/${objectKey}`;
 
     await server.db.query('BEGIN');
     try {
@@ -77,6 +75,7 @@ export function createChallanService(server: FastifyInstance) {
       throw err;
     }
 
+    server.log.info({ order_id: orderId, challan_url: challanUrl }, 'E-challan created');
     return { challan_url: challanUrl, verification_url: verificationUrl, status: 'GENERATED' };
   }
 
@@ -117,6 +116,7 @@ export function createChallanService(server: FastifyInstance) {
       data: { order_id: orderId, challan_status: 'AWAITING_BUYER_OTP' }
     });
 
+    server.log.info({ order_id: orderId }, 'E-challan signing initiated, OTP sent to buyer');
     return { message: 'OTP sent to buyer. Buyer must verify to complete the e-Challan.' };
   }
 
@@ -143,12 +143,21 @@ export function createChallanService(server: FastifyInstance) {
       throw server.httpErrors.unauthorized('Invalid OTP');
     }
 
-    await server.db.query(
-      `UPDATE public.e_challans
-       SET status = $1, buyer_verified_at = NOW(), buyer_otp_hash = NULL, buyer_otp_expires_at = NULL, updated_at = NOW()
-       WHERE id = $2`,
-      ['COMPLETED', challan.id]
-    );
+    await server.db.query('BEGIN');
+    try {
+      await server.db.query(
+        `UPDATE public.e_challans
+         SET status = $1, buyer_verified_at = NOW(), buyer_otp_hash = NULL, buyer_otp_expires_at = NULL, updated_at = NOW()
+         WHERE id = $2`,
+        ['COMPLETED', challan.id]
+      );
+
+      server.log.info({ order_id: orderId }, 'E-challan verified, delivery confirmed');
+      await server.db.query('COMMIT');
+    } catch (err) {
+      await server.db.query('ROLLBACK');
+      throw err;
+    }
 
     return { success: true, message: 'e-Challan verified and completed.' };
   }
