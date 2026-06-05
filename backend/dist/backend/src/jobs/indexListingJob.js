@@ -1,4 +1,4 @@
-import { CROP_TAXONOMY } from '../../../data/cropTaxonomy.js';
+import { CROP_TAXONOMY } from '../../../data/cropTaxonomy.ts';
 export const INDEX_LISTING_TO_ES = 'INDEX_LISTING_TO_ES';
 function getCropDisplayName(cropCategory, cropType) {
     const category = CROP_TAXONOMY[cropCategory];

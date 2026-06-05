@@ -1,4 +1,4 @@
-import { CROP_TAXONOMY } from '../../../data/cropTaxonomy.js';
+import { CROP_TAXONOMY } from '../../../data/cropTaxonomy.ts';
 export const EXPIRY_WARNING_24H = 'EXPIRY_WARNING_24H';
 export const EXPIRY_WARNING_1H = 'EXPIRY_WARNING_1H';
 export const LISTING_EXPIRE = 'LISTING_EXPIRE';

@@ -274,7 +274,7 @@ export function createListingService(server: FastifyInstance) {
       photo_s3_keys: z.array(z.string()).max(MAX_LISTING_PHOTO_KEYS).optional(),
       geo_lat: z.number().optional(),
       geo_lng: z.number().optional(),
-      justification: z.string().max(500).optional()
+      justification: z.string().trim().max(500).optional()
     }).parse(payload);
 
     const activeCountResult = await server.db.query(
@@ -291,6 +291,11 @@ export function createListingService(server: FastifyInstance) {
     const mandiPricePaise = mandiPriceString ? Number(mandiPriceString) : null;
 
     const askingPricePaise = Math.round(validated.asking_price_per_kg_inr * 100);
+    const requiresPriceOverride = Boolean(mandiPricePaise && askingPricePaise > mandiPricePaise * 3);
+    if (requiresPriceOverride && !validated.justification) {
+      throw server.httpErrors.badRequest('Asking price is more than 3x mandi price. Add an override justification to publish this listing.');
+    }
+
     const expiresAt = new Date(Date.now() + EXPIRES_HOURS * 60 * 60 * 1000);
     const listingId = await generateUniqueListingId();
 
@@ -299,8 +304,8 @@ export function createListingService(server: FastifyInstance) {
     const insertResult = await server.db.query(
       `INSERT INTO public.listings
        (listing_id, farmer_id, crop_type, crop_category, quantity_kg, quantity_remaining_kg, asking_price_paise, mandi_price_paise, harvest_date,
-        delivery_available, organic, grade, description, photo_urls, status, expires_at, geo_lat, geo_lng, ai_detected_crop, ai_confidence, job_ids)
-       VALUES ($1,$2,$3,$4,$5,$5,$6,$7,$8,$9,$10,$11,$12,$13,'ACTIVE',$14,$15,$16,NULL,NULL,$17)
+        delivery_available, organic, grade, description, photo_urls, status, expires_at, geo_lat, geo_lng, ai_detected_crop, ai_confidence, job_ids, price_override_justification)
+       VALUES ($1,$2,$3,$4,$5,$5,$6,$7,$8,$9,$10,$11,$12,$13,'ACTIVE',$14,$15,$16,NULL,NULL,$17,$18)
        RETURNING *`,
       [
         listingId,
@@ -319,7 +324,8 @@ export function createListingService(server: FastifyInstance) {
         expiresAt,
         validated.geo_lat ?? profile.geo_lat ?? null,
         validated.geo_lng ?? profile.geo_lng ?? null,
-        jobIds
+        jobIds,
+        requiresPriceOverride ? validated.justification : null
       ]
     );
 
@@ -354,7 +360,7 @@ export function createListingService(server: FastifyInstance) {
       status: listing.status,
       expires_at: listing.expires_at,
       mandi_comparison: mandiComparison,
-      warning: mandiPricePaise && askingPricePaise > mandiPricePaise * 3 ? 'Asking price is more than 3x mandi price and may require justification' : undefined
+      warning: requiresPriceOverride ? 'Asking price is more than 3x mandi price. Override justification recorded for moderation review.' : undefined
     };
   }
 

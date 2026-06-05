@@ -1,0 +1,19 @@
+{
+  "runs": [
+    {
+      "date": "2026-06-04T03:10:01.567728+00:00",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "files": 237
+    },
+    {
+      "date": "2026-06-04T04:06:50.940971+00:00",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "files": 239,
+      "note": "structural code refresh; semantic docs skipped without LLM key"
+    }
+  ],
+  "total_input_tokens": 0,
+  "total_output_tokens": 0
+}

@@ -23,10 +23,12 @@ export default function NewListingPage() {
     harvest_date: new Date().toISOString().split('T')[0],
     organic: false,
     delivery_available: false,
-    description: ''
+    description: '',
+    justification: ''
   });
   
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const startCamera = async () => {
     try {
@@ -128,6 +130,7 @@ export default function NewListingPage() {
   const submitListing = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
+    setSubmitError(null);
     try {
       const payload = {
         ...formData,
@@ -142,10 +145,13 @@ export default function NewListingPage() {
         body: JSON.stringify(payload)
       });
       
-      if (!res.ok) throw new Error('Failed to create listing');
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message || body?.error || 'Failed to create listing');
+      }
       router.push('/farmers/dashboard');
-    } catch (err) {
-      alert('Error creating listing. Check inputs.');
+    } catch (err: any) {
+      setSubmitError(err?.message ?? 'Error creating listing. Check inputs.');
     } finally {
       setIsSubmitting(false);
     }
@@ -254,10 +260,10 @@ export default function NewListingPage() {
                     <label className="block text-sm font-medium text-slate-700">Quantity (kg)</label>
                     <input required type="number" min="1" value={formData.quantity_kg} onChange={e => setFormData({...formData, quantity_kg: e.target.value})} className="mt-1 w-full rounded-xl border-slate-300 p-3 shadow-sm focus:border-emerald-500 focus:ring-emerald-500" />
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700">Price (₹/kg)</label>
-                    <input required type="number" min="0.5" step="0.5" value={formData.asking_price_per_kg_inr} onChange={e => setFormData({...formData, asking_price_per_kg_inr: e.target.value})} className="mt-1 w-full rounded-xl border-slate-300 p-3 shadow-sm focus:border-emerald-500 focus:ring-emerald-500" />
-                  </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700">Price (₹/kg)</label>
+                  <input required type="number" min="0.5" step="0.5" value={formData.asking_price_per_kg_inr} onChange={e => setFormData({...formData, asking_price_per_kg_inr: e.target.value})} className="mt-1 w-full rounded-xl border-slate-300 p-3 shadow-sm focus:border-emerald-500 focus:ring-emerald-500" />
+                </div>
                 </div>
 
                 <div>
@@ -275,6 +281,11 @@ export default function NewListingPage() {
                   <textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} rows={3} className="mt-1 w-full rounded-xl border-slate-300 p-3 shadow-sm focus:border-emerald-500 focus:ring-emerald-500" placeholder="Describe the quality, grade, or any other details..." />
                 </div>
 
+                <div>
+                  <label className="block text-sm font-medium text-slate-700">Price override reason</label>
+                  <textarea value={formData.justification} onChange={e => setFormData({...formData, justification: e.target.value})} rows={2} className="mt-1 w-full rounded-xl border-slate-300 p-3 shadow-sm focus:border-emerald-500 focus:ring-emerald-500" placeholder="Required only if your asking price is more than 3x mandi price." />
+                </div>
+
                 <div className="space-y-4 pt-4 border-t border-slate-100">
                   <label className="flex items-center gap-3">
                     <input type="checkbox" checked={formData.organic} onChange={e => setFormData({...formData, organic: e.target.checked})} className="h-5 w-5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-600" />
@@ -287,6 +298,12 @@ export default function NewListingPage() {
                 </div>
               </div>
             </div>
+
+            {submitError && (
+              <div className="rounded-2xl bg-amber-50 p-4 text-sm font-medium text-amber-800 ring-1 ring-amber-200">
+                {submitError}
+              </div>
+            )}
 
             <div className="flex gap-4">
               <button type="button" onClick={() => setStep('PHOTO')} className="flex-1 rounded-xl bg-slate-200 py-4 font-bold text-slate-700 hover:bg-slate-300">

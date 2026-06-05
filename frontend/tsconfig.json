@@ -5,6 +5,10 @@
     "module": "ESNext",
     "target": "ES2021",
     "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"]
+    },
     "noEmit": true,
     "incremental": true,
     "plugins": [

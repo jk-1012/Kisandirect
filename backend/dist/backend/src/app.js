@@ -8,6 +8,7 @@ import rateLimit from '@fastify/rate-limit';
 import dotenv from 'dotenv';
 import authRoutes from './routes/auth.js';
 import farmerRoutes from './routes/farmers.js';
+import kycRoutes from './routes/kyc.js';
 import listingRoutes from './routes/listings.js';
 import orderRoutes from './routes/orders.js';
 import offersRoutes from './routes/offers.js';
@@ -69,6 +70,7 @@ export async function buildApp() {
     await server.register(idempotencyPlugin);
     await server.register(authRoutes, { prefix: '/api/v1/auth' });
     await server.register(farmerRoutes, { prefix: '/api/v1/farmers' });
+    await server.register(kycRoutes, { prefix: '/api/v1/farmers' });
     await server.register(listingRoutes, { prefix: '/api/v1' });
     await server.register(orderRoutes, { prefix: '/api/v1' });
     await server.register(disputeRoutes, { prefix: '/api/v1' });

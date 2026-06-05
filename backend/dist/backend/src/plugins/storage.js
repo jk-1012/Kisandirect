@@ -67,19 +67,25 @@ export const storagePlugin = fp(async (server) => {
     const region = process.env.AWS_REGION ?? DEFAULT_REGION;
     const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
     const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+    const endpoint = process.env.AWS_S3_ENDPOINT;
     const opensearchUrl = process.env.OPENSEARCH_URL;
     const cloudfrontDomain = process.env.CLOUDFRONT_DOMAIN ?? '';
     const listingIndexName = process.env.LISTING_INDEX_NAME ?? DEFAULT_INDEX_NAME;
     if (!bucketName || !accessKeyId || !secretAccessKey || !opensearchUrl) {
         throw new Error('AWS_S3_BUCKET, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and OPENSEARCH_URL are required for storage plugin');
     }
-    const s3Client = new S3Client({
+    const s3ClientConfig = {
         region,
         credentials: {
             accessKeyId,
             secretAccessKey
         }
-    });
+    };
+    if (endpoint) {
+        s3ClientConfig.endpoint = endpoint;
+        s3ClientConfig.forcePathStyle = true;
+    }
+    const s3Client = new S3Client(s3ClientConfig);
     const searchClient = new OpenSearchClient({ node: opensearchUrl });
     await ensureIndex(searchClient, listingIndexName);
     server.decorate('storage', {

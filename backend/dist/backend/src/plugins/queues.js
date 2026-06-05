@@ -5,7 +5,7 @@ import { createClient } from 'redis';
 import { GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import sharp from 'sharp';
 import { createAuthService } from '../services/auth-service.js';
-import { CROP_TAXONOMY, VISION_LABEL_MAP } from '../../../data/cropTaxonomy.js';
+import { CROP_TAXONOMY, VISION_LABEL_MAP } from '../../../data/cropTaxonomy.ts';
 import { INDEX_LISTING_TO_ES, indexListingJob } from '../jobs/indexListingJob.js';
 import { RELEASE_ESCROW, processReleaseEscrow } from '../jobs/escrowReleaseJob.js';
 import { createMarketService, INGEST_AGMARKNET_PRICES } from '../services/market-service.js';
